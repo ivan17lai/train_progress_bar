@@ -26,14 +26,13 @@ class _NotificationProgressDemoState extends State<NotificationProgressDemo> {
   FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
   Timer? _timer;
 
-  // 設定發車時間和抵達時間
   DateTime startTime = DateTime(2024, 9, 6, 10, 45); // 發車時間
-  DateTime endTime = DateTime(2024, 9, 6, 12, 16); // 抵達時間
+  DateTime endTime = DateTime(2024, 9, 6, 12, 16);   // 抵達時間
+  String notificationTitle = '114自強 臺中-中壢';
 
   @override
   void initState() {
     super.initState();
-    // 請求通知權限
     requestNotificationPermission();
 
     // 初始化通知
@@ -43,9 +42,6 @@ class _NotificationProgressDemoState extends State<NotificationProgressDemo> {
       initializationSettings,
       onDidReceiveNotificationResponse: _handleNotificationResponse,
     );
-
-    // 開始進度更新
-    _startProgress();
   }
 
   void requestNotificationPermission() async {
@@ -55,8 +51,20 @@ class _NotificationProgressDemoState extends State<NotificationProgressDemo> {
     }
   }
 
-  // 計算進度百分比：根據當前時間、發車時間和抵達時間
-  double _calculateProgress() {
+  // 修正計算發車時間剩餘
+  String _getRemainingStartTime(DateTime startTime) {
+    DateTime now = DateTime.now();
+    Duration remainingDuration = startTime.difference(now);
+    if (remainingDuration.isNegative) {
+      return '已發車';
+    } else {
+      int hours = remainingDuration.inHours;
+      int minutes = (remainingDuration.inMinutes % 60);
+      return '${hours}時${minutes}分';
+    }
+  }
+
+  double _calculateProgress(DateTime startTime, DateTime endTime) {
     DateTime now = DateTime.now();
     if (now.isBefore(startTime)) {
       return 0.0;
@@ -69,8 +77,7 @@ class _NotificationProgressDemoState extends State<NotificationProgressDemo> {
     }
   }
 
-  // 計算剩餘時間
-  String _getRemainingTime() {
+  String _getRemainingTime(DateTime endTime) {
     DateTime now = DateTime.now();
     Duration remainingDuration = endTime.difference(now);
     if (remainingDuration.isNegative) {
@@ -82,33 +89,43 @@ class _NotificationProgressDemoState extends State<NotificationProgressDemo> {
     }
   }
 
-  // 計算預計抵達時間
-  String _getEstimatedArrivalTime() {
+  String _getEstimatedArrivalTime(DateTime endTime) {
     return DateFormat('HH:mm').format(endTime);
   }
 
-  void _startProgress() {
+  // 修改開始函式，接受發車時間、抵達時間及通知標題
+  Future<void> startNotificationProgress(DateTime start, DateTime end, String title) async {
+    setState(() {
+      startTime = start;
+      endTime = end;
+      notificationTitle = title;
+    });
+
+    // 按下按鈕後立即顯示一次通知
+    await _showNotificationWithProgress(startTime, endTime, notificationTitle);
+
+    // 每分鐘更新進度
     _timer = Timer.periodic(Duration(minutes: 1), (Timer timer) {
       setState(() {
-        _showNotificationWithProgress();
+        _showNotificationWithProgress(startTime, endTime, notificationTitle);
       });
     });
   }
 
-  Future<void> _showNotificationWithProgress() async {
+  Future<void> _showNotificationWithProgress(DateTime start, DateTime end, String title) async {
     DateTime now = DateTime.now();
     String notificationBody;
     int progress = 0;
 
-    if (now.isBefore(startTime)) {
-      notificationBody = '預計發車時間: ${DateFormat('HH:mm').format(startTime)} \n'
-          '剩餘: ${_getRemainingTime()}';
-    } else if (now.isAfter(endTime)) {
+    if (now.isBefore(start)) {
+      notificationBody = '預計發車時間: ${DateFormat('HH:mm').format(start)} \n'
+          '剩餘: ${_getRemainingStartTime(start)}';
+    } else if (now.isAfter(end)) {
       notificationBody = '已抵達';
     } else {
-      double progressValue = _calculateProgress();
-      notificationBody = '預計抵達: ${_getEstimatedArrivalTime()} \n'
-          '剩餘: ${_getRemainingTime()} \n';
+      double progressValue = _calculateProgress(start, end);
+      notificationBody = '預計抵達: ${_getEstimatedArrivalTime(end)} \n'
+          '剩餘: ${_getRemainingTime(end)} \n';
       progress = (progressValue * 100).toInt();
     }
 
@@ -118,9 +135,12 @@ class _NotificationProgressDemoState extends State<NotificationProgressDemo> {
       channelDescription: 'This channel is used for progress notifications',
       importance: Importance.max,
       priority: Priority.high,
-      showProgress: now.isAfter(startTime) && now.isBefore(endTime),
+      showProgress: now.isAfter(start) && now.isBefore(end),
       maxProgress: 100,
       progress: progress,
+      // 禁用音效和震動
+      playSound: false,
+      enableVibration: false,
       actions: <AndroidNotificationAction>[
         AndroidNotificationAction(
           'stop_action',
@@ -130,26 +150,23 @@ class _NotificationProgressDemoState extends State<NotificationProgressDemo> {
     );
     final platformChannelSpecifics = NotificationDetails(android: androidPlatformChannelSpecifics);
 
-    // 顯示通知
     await flutterLocalNotificationsPlugin.show(
       0,
-      '114自強 臺中-中壢',
+      title, // 使用傳入的通知標題
       notificationBody,
       platformChannelSpecifics,
     );
   }
 
-  // 處理通知按鈕點擊
-  void _handleNotificationResponse(NotificationResponse response) {
-    if (response.actionId == 'stop_action') {
-      _stopProgress();
-    }
+  Future<void> stopNotificationProgress() async {
+    _timer?.cancel();
+    await flutterLocalNotificationsPlugin.cancel(0);
   }
 
-  // 停止進度更新
-  void _stopProgress() {
-    _timer?.cancel();
-    flutterLocalNotificationsPlugin.cancel(0); // 移除通知
+  void _handleNotificationResponse(NotificationResponse response) {
+    if (response.actionId == 'stop_action') {
+      stopNotificationProgress();
+    }
   }
 
   @override
@@ -170,8 +187,16 @@ class _NotificationProgressDemoState extends State<NotificationProgressDemo> {
             Text('發車時間: ${DateFormat('yyyy-MM-dd HH:mm').format(startTime)}'),
             Text('抵達時間: ${DateFormat('yyyy-MM-dd HH:mm').format(endTime)}'),
             ElevatedButton(
-              onPressed: _showNotificationWithProgress,
-              child: Text('顯示發車通知'),
+              onPressed: () {
+                DateTime newStart = DateTime(2024, 9, 13, 14, 45); // 自訂發車時間
+                DateTime newEnd = DateTime(2024, 9, 13, 16, 16);   // 自訂抵達時間
+                startNotificationProgress(newStart, newEnd, '122自強 臺中-中壢');
+              },
+              child: Text('開始發車通知'),
+            ),
+            ElevatedButton(
+              onPressed: stopNotificationProgress,
+              child: Text('停止發車通知'),
             ),
           ],
         ),
